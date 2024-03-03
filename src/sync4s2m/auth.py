@@ -3,6 +3,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from authlib.integrations.requests_client import OAuth2Session
 from authlib.common.security import generate_token
+from requests_ratelimiter import LimiterAdapter
 
 import webbrowser
 import requests
@@ -59,9 +60,6 @@ class APIManager(object):
         name: str,
         auth_uri: str,
         token_uri: str,
-        client_id: str,
-        client_secret: str,
-        port: int,
         scope: list[str],
         session_class=OAuth2Session,
         session_kwargs: dict = {},
@@ -69,9 +67,9 @@ class APIManager(object):
         self.name = name
         self.auth_uri = auth_uri
         self.token_uri = token_uri
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.port = port
+        self.client_id = cfg.get(f"{name}.client_id")
+        self.client_secret = cfg.get(f"{name}.client_secret", False)
+        self.port = cfg.get(f"{name}.port")
         self.scope = scope
         self.__session_class__ = session_class
         self.__session_kwargs__ = session_kwargs
@@ -148,6 +146,9 @@ class APIManager(object):
                 state=self.state,
                 **self.__session_kwargs__,
             )
+            adapter = LimiterAdapter(limiter=cfg.get_limiter(self.name))
+            self.__session__.mount("https://", adapter)
+            self.__session__.mount("http://", adapter)
         return self.__session__
 
     def _whoami_(self):
@@ -160,9 +161,6 @@ class ShikimoriAPIManager(APIManager):
             "shikimori",
             f"https://shikimori.{cfg.get('shikimori.domain')}/oauth/authorize",
             f"https://shikimori.{cfg.get('shikimori.domain')}/oauth/token",
-            cfg.get("shikimori.client_id"),
-            cfg.get("shikimori.client_secret"),
-            cfg.get("shikimori.port"),
             ["user_rates"],
             OAuth2SessionWithUserAgent,
             {"user_agent": cfg.get("shikimori.app_name")},
@@ -184,9 +182,6 @@ class MyAnimeListAPIManager(APIManager):
             "myanimelist",
             f"https://myanimelist.net/v1/oauth2/authorize",
             f"https://myanimelist.net/v1/oauth2/token",
-            cfg.get("myanimelist.client_id"),
-            None,
-            cfg.get("myanimelist.port"),
             ["write:users"],
             session_kwargs={"code_challenge_method": "plain"},
         )

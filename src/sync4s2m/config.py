@@ -1,4 +1,5 @@
 from pathlib import Path
+from pyrate_limiter import Duration, RequestRate, Limiter
 
 import os
 import platform
@@ -33,8 +34,24 @@ class Config(object):
     def __init__(self, logger):
         self.logger = logger
         self.__values__ = {
-            "shikimori": {"app_name": "", "client_id": "", "client_secret": "", "port": 0, "domain": "one"},
-            "myanimelist": {"client_id": "", "port": 0}
+            "shikimori": {
+                "app_name": "",
+                "client_id": "",
+                "client_secret": "",
+                "port": 0,
+                "domain": "one",
+            },
+            "myanimelist": {"client_id": "", "port": 0},
+            "rate_limiter": {
+                "shikimori": [
+                    {"count": 5, "unit": "SECOND", "factor": 1},
+                    {"count": 90, "unit": "MINUTE", "factor": 1},
+                ],
+                "myanimelist": [
+                    {"count": 5, "unit": "SECOND", "factor": 1},
+                    {"count": 90, "unit": "MINUTE", "factor": 1},
+                ],
+            },
         }
 
     def __validate__(self) -> bool:
@@ -42,7 +59,14 @@ class Config(object):
         if not "shikimori" in self.__values__:
             self.__values__["shikimori"] = {}
         shiki = self.__values__["shikimori"]
-        if not (shiki and shiki["app_name"] and shiki["client_id"] and shiki["client_secret"] and shiki["port"] > 0 and shiki["domain"]):
+        if not (
+            shiki
+            and shiki["app_name"]
+            and shiki["client_id"]
+            and shiki["client_secret"]
+            and shiki["port"] > 0
+            and shiki["domain"]
+        ):
             self.logger.warn("Invalid Shikimori block, put actual values")
             shiki["app_name"] = input("App name: ")
             shiki["client_id"] = input("Client ID: ")
@@ -58,13 +82,41 @@ class Config(object):
             mal["client_id"] = input("Client ID: ")
             mal["port"] = int(input("Port: "))
             result = True
+        if not "rate_limiter" in self.__values__:
+            self.__values__["rate_limiter"] = {}
+        limiter = self.__values__["rate_limiter"]
+        if not "shikimori" in limiter or not limiter["shikimori"]:
+            limiter["shikimori"] = [
+                {"count": 5, "unit": "SECOND", "factor": 1},
+                {"count": 90, "unit": "MINUTE", "factor": 1},
+            ]
+        if not "myanimelist" in limiter or not limiter["myanimelist"]:
+            limiter["myanimelist"] = [
+                {"count": 5, "unit": "SECOND", "factor": 1},
+                {"count": 90, "unit": "MINUTE", "factor": 1},
+            ]
         return True
 
-    def get(self, key: str) -> any:
+    def get(self, key: str, do_raise=True) -> any:
         result = self.__values__
         for step in key.split("."):
-            result = result[step]
+            if step in result:
+                result = result[step]
+            elif do_raise:
+                raise KeyError(f"Can't find '{step}' step in '{key}' key")
+            else:
+                return None
         return result
+
+    def get_limiter(self, name: str) -> Limiter:
+        params = self.get(f"rate_limiter.{name}")
+        rates = [
+            RequestRate(
+                param["count"], getattr(Duration, param["unit"]) * param["factor"]
+            )
+            for param in params
+        ]
+        return Limiter(*rates)
 
     def load(self):
         self.logger.info("Configuration loading...")
