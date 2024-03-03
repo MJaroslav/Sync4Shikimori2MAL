@@ -1,12 +1,13 @@
 from sync4s2m import logger
-from sync4s2m.auth import ShikimoriTokenSaver
+from sync4s2m.auth import ShikimoriAPIManager
 
 import requests
 
 
-shikimori_token_saver = ShikimoriTokenSaver()
-shikimori_token_saver.load()
+shikimori_api = ShikimoriAPIManager()
+shikimori_api.login()
 
-request = requests.get("https://shikimori.one/api/users/whoami", headers=shikimori_token_saver.headers())
-if request.status_code == 200:
-    logger.info(request.text)
+id_ = shikimori_api.whoami["id"]
+result = shikimori_api.client.get(f"https://shikimori.one/api/users/{id_}/anime_rates", params={"limit": 5000}).json()
+result = [e["anime"]["russian"] for e in result]
+print(result)

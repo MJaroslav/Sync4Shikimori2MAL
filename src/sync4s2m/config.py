@@ -33,18 +33,19 @@ class Config(object):
     def __init__(self, logger):
         self.logger = logger
         self.__values__ = {
-            "shikimori": {"app_name": "", "client_id": "", "client_secret": "", "port": 0}
+            "shikimori": {"app_name": "", "client_id": "", "client_secret": "", "port": 0, "domain": "one"}
         }
 
     def __validate__(self) -> bool:
         result = False
         shiki = self.__values__["shikimori"]
-        if not (shiki["app_name"] and shiki["client_id"] and shiki["client_secret"] and shiki["port"] > 0):
+        if not (shiki["app_name"] and shiki["client_id"] and shiki["client_secret"] and shiki["port"] > 0 and shiki["domain"]):
             self.logger.warn("Invalid shikimori block, put actual values")
             shiki["app_name"] = input("App name: ")
             shiki["client_id"] = input("Client ID: ")
             shiki["client_secret"] = input("Client secret: ")
             shiki["port"] = int(input("Port: "))
+            shiki["domain"] = input("Domain: ")
             result = True
         return True
 
