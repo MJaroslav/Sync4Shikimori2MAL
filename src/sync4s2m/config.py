@@ -40,8 +40,10 @@ class Config(object):
             if create:
                 result.mkdir(parents=True, exist_ok=True)
             return result
-        return platformdirs.user_config_dir(
-            appname="sync4s2m", appauthor="MJaroslav", ensure_exists=create
+        return Path(
+            platformdirs.user_config_dir(
+                appname="sync4s2m", appauthor="MJaroslav", ensure_exists=create
+            )
         )
 
     def __validate__(self) -> bool:
