@@ -2,32 +2,11 @@ from pathlib import Path
 from pyrate_limiter import Duration, RequestRate, Limiter
 
 import os
-import platform
-import shutil
 import json
+import platformdirs
 
 
 ENV_HOME_PATH = "SYNC4S2M_HOME"
-ENV_APPDATA = "APPDATA"
-ENV_XDG_CONFIG = "XDG_CONFIG_HOME"
-
-
-def get_config_dir(create: bool = False) -> Path:
-    result = None
-    if ENV_HOME_PATH in os.environ:
-        result = Path(os.environ[ENV_HOME_PATH])
-    elif platform.system() == "Linux":
-        if ENV_XDG_CONFIG in os.environ:
-            result = Path(os.environ[ENV_XDG_CONFIG])
-        else:
-            result = Path.home() / ".config" / "sync4s2m"
-    elif platform.system() == "Windows":
-        result = Path(os.environ[ENV_APPDATA]) / ".sync4s2m"
-    else:
-        raise NotImplementedError(f"Platform {patform.system} not implemented")
-    if create:
-        result.mkdir(parents=True, exist_ok=True)
-    return result
 
 
 class Config(object):
@@ -54,6 +33,17 @@ class Config(object):
             },
         }
 
+    @staticmethod
+    def get_config_dir(create: bool = False) -> Path:
+        if ENV_HOME_PATH in os.environ:
+            result = Path(os.environ[ENV_HOME_PATH])
+            if create:
+                result.mkdir(parents=True, exist_ok=True)
+            return result
+        return platformdirs.user_config_dir(
+            appname="sync4s2m", appauthor="MJaroslav", ensure_exists=create
+        )
+
     def __validate__(self) -> bool:
         result = False
         if not "shikimori" in self.__values__:
@@ -61,10 +51,15 @@ class Config(object):
         shiki = self.__values__["shikimori"]
         if not (
             shiki
+            and "app_name" in shiki
             and shiki["app_name"]
+            and "client_id" in shiki
             and shiki["client_id"]
+            and "client_secret" in shiki
             and shiki["client_secret"]
+            and "port" in shiki
             and shiki["port"] > 0
+            and "domain" in shiki
             and shiki["domain"]
         ):
             self.logger.warn("Invalid Shikimori block, put actual values")
@@ -77,7 +72,13 @@ class Config(object):
         if not "myanimelist" in self.__values__:
             self.__values__["myanimelist"] = {}
         mal = self.__values__["myanimelist"]
-        if not (mal and mal["client_id"] and mal["port"] > 0):
+        if not (
+            mal
+            and "client_id" in mal
+            and mal["client_id"]
+            and "port" in mal
+            and mal["port"] > 0
+        ):
             self.logger.warn("Invalid MyAnimeList block, put actual values")
             mal["client_id"] = input("Client ID: ")
             mal["port"] = int(input("Port: "))
@@ -90,12 +91,14 @@ class Config(object):
                 {"count": 5, "unit": "SECOND", "factor": 1},
                 {"count": 90, "unit": "MINUTE", "factor": 1},
             ]
+            result = True
         if not "myanimelist" in limiter or not limiter["myanimelist"]:
             limiter["myanimelist"] = [
                 {"count": 5, "unit": "SECOND", "factor": 1},
                 {"count": 90, "unit": "MINUTE", "factor": 1},
             ]
-        return True
+            result = True
+        return result
 
     def get(self, key: str, do_raise=True) -> any:
         result = self.__values__
@@ -120,9 +123,9 @@ class Config(object):
 
     def load(self):
         self.logger.info("Configuration loading...")
-        path = get_config_dir(True) / "config.json"
+        path = self.get_config_dir(True) / "config.json"
         if not path.is_file():
-            logger.info("Configuration file not found, creating default...")
+            self.logger.info("Configuration file not found, creating default...")
             with open(path, "w") as file:
                 json.dump(self.__values__, file, indent=2)
         with open(path, "r") as file:

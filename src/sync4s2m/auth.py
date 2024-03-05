@@ -1,14 +1,15 @@
-from sync4s2m import logger, cfg
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from authlib.integrations.requests_client import OAuth2Session
 from authlib.common.security import generate_token
 from requests_ratelimiter import LimiterAdapter
+from logging import Logger
+from sync4s2m.config import Config
+
 
 import webbrowser
 import requests
 import json
-import sync4s2m.config as config
 
 
 class OAuthHTTPHandler(BaseHTTPRequestHandler):
@@ -33,9 +34,26 @@ class OAuthHTTPServer(HTTPServer):
         self.result = None
 
 
-class OAuth2SessionWithUserAgent(OAuth2Session):
-    def __init__(self, user_agent: str, *args, **kwargs):
-        OAuth2Session.__init__(self, *args, **kwargs)
+class OAuth2SessionWithURLPrefix(OAuth2Session):
+    def __init__(self, prefix: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.prefix = prefix
+
+    def request(self, method, url, withhold_token=False, auth=None, **kwargs):
+        if url.startswith("/"):
+            url = f"{self.prefix}{url}"
+        return super().request(
+            method,
+            url,
+            withhold_token=withhold_token,
+            auth=auth,
+            **kwargs,
+        )
+
+
+class OAuth2SessionWithUserAgent(OAuth2SessionWithURLPrefix):
+    def __init__(self, prefix: str, user_agent: str, *args, **kwargs):
+        super().__init__(prefix=prefix, *args, **kwargs)
         self.user_agent = user_agent
 
     def request(self, method, url, withhold_token=False, auth=None, **kwargs):
@@ -57,20 +75,26 @@ class OAuth2SessionWithUserAgent(OAuth2Session):
 class APIManager(object):
     def __init__(
         self,
+        logger: Logger,
+        config: Config,
         name: str,
         auth_uri: str,
         token_uri: str,
         scope: list[str],
-        session_class=OAuth2Session,
+        prefix_url: str,
+        session_class=OAuth2SessionWithURLPrefix,
         session_kwargs: dict = {},
     ):
+        self.logger = logger
+        self.config = config
         self.name = name
         self.auth_uri = auth_uri
         self.token_uri = token_uri
-        self.client_id = cfg.get(f"{name}.client_id")
-        self.client_secret = cfg.get(f"{name}.client_secret", False)
-        self.port = cfg.get(f"{name}.port")
+        self.client_id = self.config.get(f"{name}.client_id")
+        self.client_secret = self.config.get(f"{name}.client_secret", False)
+        self.port = self.config.get(f"{name}.port")
         self.scope = scope
+        self.prefix_url = prefix_url
         self.__session_class__ = session_class
         self.__session_kwargs__ = session_kwargs
         self.__session__ = None
@@ -83,18 +107,20 @@ class APIManager(object):
         )
 
     def _on_token_refresh_(self, token, **kwargs):
-        logger.info(f"Token refreshed by {self.token_uri}")
+        self.logger.info(f"Token refreshed by {self.token_uri}")
         self.save_token()
 
     def load_token(self) -> dict:
-        path = config.get_config_dir(True) / f"{self.name}.auth.json"
+        path = self.config.get_config_dir(True) / f"{self.name}.auth.json"
         if path.is_file():
             with open(path, "r") as file:
                 return json.load(file)
         return {}
 
     def save_token(self):
-        with open(config.get_config_dir(True) / f"{self.name}.auth.json", "w") as file:
+        with open(
+            self.config.get_config_dir(True) / f"{self.name}.auth.json", "w"
+        ) as file:
             json.dump(self.client.token, file, indent=2)
 
     def login(self):
@@ -111,10 +137,10 @@ class APIManager(object):
                 uri, self.state = self.client.create_authorization_url(
                     self.auth_uri, **extra_kwargs
                 )
-                logger.info(
+                self.logger.info(
                     "Trying to open the authorization link in the browser, do it yourself otherwise:"
                 )
-                logger.info(uri)
+                self.logger.info(uri)
                 webbrowser.open_new(uri)
                 httpd.handle_request()
                 self.__session__ = None
@@ -144,9 +170,10 @@ class APIManager(object):
                 redirect_uri=f"http://localhost:{self.port}/",
                 update_token=self._on_token_refresh_,
                 state=self.state,
+                prefix=self.prefix_url,
                 **self.__session_kwargs__,
             )
-            adapter = LimiterAdapter(limiter=cfg.get_limiter(self.name))
+            adapter = LimiterAdapter(limiter=self.config.get_limiter(self.name))
             self.__session__.mount("https://", adapter)
             self.__session__.mount("http://", adapter)
         return self.__session__
@@ -156,39 +183,43 @@ class APIManager(object):
 
 
 class ShikimoriAPIManager(APIManager):
-    def __init__(self):
+    def __init__(self, logger: Logger, config: Config):
         super().__init__(
+            logger,
+            config,
             "shikimori",
-            f"https://shikimori.{cfg.get('shikimori.domain')}/oauth/authorize",
-            f"https://shikimori.{cfg.get('shikimori.domain')}/oauth/token",
+            f"https://shikimori.{config.get('shikimori.domain')}/oauth/authorize",
+            f"https://shikimori.{config.get('shikimori.domain')}/oauth/token",
             ["user_rates"],
+            f"https://shikimori.{config.get('shikimori.domain')}/api",
             OAuth2SessionWithUserAgent,
-            {"user_agent": cfg.get("shikimori.app_name")},
+            {"user_agent": config.get("shikimori.app_name")},
         )
 
     def login(self):
         super().login()
-        logger.info(f"Shikimori authorized as {self.whoami['nickname']}")
+        self.logger.info(f"Shikimori authorized as {self.whoami['nickname']}")
 
     def _whoami_(self):
-        return self.client.get(
-            f"https://shikimori.{cfg.get('shikimori.domain')}/api/users/whoami"
-        ).json()
+        return self.client.get("/users/whoami").json()
 
 
 class MyAnimeListAPIManager(APIManager):
-    def __init__(self):
+    def __init__(self, logger: Logger, config: Config):
         super().__init__(
+            logger,
+            config,
             "myanimelist",
             f"https://myanimelist.net/v1/oauth2/authorize",
             f"https://myanimelist.net/v1/oauth2/token",
             ["write:users"],
+            "https://api.myanimelist.net/v2",
             session_kwargs={"code_challenge_method": "plain"},
         )
 
     def login(self):
         super().login()
-        logger.info(f"MyAnimeList authorized as {self.whoami['name']}")
+        self.logger.info(f"MyAnimeList authorized as {self.whoami['name']}")
 
     def _whoami_(self):
-        return self.client.get("https://api.myanimelist.net/v2/users/@me").json()
+        return self.client.get("/users/@me").json()
