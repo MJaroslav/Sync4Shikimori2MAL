@@ -6,9 +6,9 @@ import logging
 
 
 class Sync4Shikimori2MAL(object):
-    def __init__(self):
+    def __init__(self, args):
         self.logger = self._init_logger_()
-        self.config = self._init_config_(self.logger)
+        self.config = self._init_config_(self.logger, args)
         self.config.load()
         self.shikimori = self._init_shikimori_(self.logger, self.config)
         self.myanimelist = self._init_myanimelist_(self.logger, self.config)
@@ -21,8 +21,8 @@ class Sync4Shikimori2MAL(object):
         result.addHandler(handler)
         return result
 
-    def _init_config_(self, logger: logging.Logger) -> Config:
-        return Config(logger)
+    def _init_config_(self, logger: logging.Logger, args) -> Config:
+        return Config(logger, args)
 
     def _init_shikimori_(
         self, logger: logging.Logger, config: Config
@@ -35,9 +35,17 @@ class Sync4Shikimori2MAL(object):
         return MyAnimeListAPIManager(logger, config)
 
     def login(self) -> tuple[OAuth2Session]:
+        self.logger.info("Login and creating API sessions...")
         self.shikimori.login()
         self.myanimelist.login()
+        self.logger.info("API sessions created and authorized")
         return (self.shikimori, self.myanimelist)
+
+    def logout(self):
+        self.logger.info("Shutting down API sessions...")
+        self.shikimori.close()
+        self.myanimelist.close()
+        self.logger.info("API sessions closed")
 
     def get_shikimori_list(self) -> list:
         api = self.shikimori.client
@@ -153,7 +161,7 @@ class Sync4Shikimori2MAL(object):
             added = list(
                 map(
                     lambda l: l[1],
-                    filter(lambda e: not e[0] in myanimelist, shikimori.items()),
+                    filter(lambda e: not e[0] in shikimori, myanimelist.items()),
                 )
             )
             for e in added:
@@ -161,7 +169,7 @@ class Sync4Shikimori2MAL(object):
             removed = list(
                 map(
                     lambda l: l[1],
-                    filter(lambda e: not e[0] in shikimori, myanimelist.items()),
+                    filter(lambda e: not e[0] in myanimelist, shikimori.items()),
                 )
             )
             for e in removed:
@@ -173,9 +181,10 @@ class Sync4Shikimori2MAL(object):
                     filter(lambda e: e[0] in shikimori, myanimelist.items()),
                 )
             )
+            edited = []
             for e in shared:
                 status_source = self.uni_status(e[1])
-                status_target = self.uni_status(myanimelist[e[2]["id"]][1])
+                status_target = self.uni_status(shikimori[e[2]["id"]][1])
                 if status_source != status_target:
                     e[1]["delta"] = dict(status_source.items() ^ status_target.items())
                     edited.append(e)
@@ -222,7 +231,9 @@ class Sync4Shikimori2MAL(object):
         if status_data["chapters"] is None:
             status_data["chapters"] = 0
 
-        if "chapters" in source:
+        status_data["count"] = max(status_data["episodes"], status_data["chapters"])
+
+        if "volumes" in source:
             status_data["volumes"] = source["volumes"]
         elif "num_volumes_read" in source:
             status_data["volumes"] = source["num_volumes_read"]
@@ -258,7 +269,7 @@ class Sync4Shikimori2MAL(object):
         obj["id"] = source["id"]
         obj["name"] = source["name"] if "name" in source else source["title"]
         obj["type"] = source["kind"] if "kind" in source else source["media_type"]
-        obj["name_ru"] = source["russian"] if "russian" in source else obj["name"]
+        obj["name_ru"] = source["russian"] if "russian" in source and source["russian"] else obj["name"]
         obj["name_en"] = obj["name"]
         obj["name_ja"] = obj["name"]
         if "english" in source and source["english"]:
@@ -281,9 +292,34 @@ class Sync4Shikimori2MAL(object):
         return obj
 
     def uni_list(self, source: list) -> list:
-        if source and len(source[0]) == 2:
+        if source and len(source[0]) == 2:  # Delta list
             return [(e[0], (e[1][0], self.uni_status(e[1][1]), self.uni_obj(e[1][2]))) for e in source]
-        elif source and len(source[0]) == 3:
+        elif source and len(source[0]) == 3:  # Just list
             return [(e[0], self.uni_status(e[1]), self.uni_obj(e[2])) for e in source]
         else:
-            return source
+            raise ValueError(f"{source} is not supported list")
+    
+    def to_format_dict(self, source: list) -> dict:
+        try:
+            if source and len(source[0]) == 2:  # Delta list
+                result = []
+                for e in source:
+                    formatted = dict(e[1][1])
+                    formatted.update(e[1][2])
+                    formatted["title_type"] = e[1][0]
+                    formatted["modify_type"] = e[0]
+                    result.append(formatted)
+                return result
+            elif source and len(source[0]) == 3:  # Just list
+                result = []
+                for e in source:
+                    formatted = dict(e[1])
+                    formatted.update(e[2])
+                    formatted["title_type"] = e[0]
+                    formatted["modify_type"] = "unmodified"
+                    result.append(formatted)
+                return result
+            else:
+                raise ValueError(f"{source} is not supported list")
+        except KeyError:
+            raise ValueError("f{source} is not unified list")

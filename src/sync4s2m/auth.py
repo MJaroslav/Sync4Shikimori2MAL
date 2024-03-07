@@ -107,7 +107,7 @@ class APIManager(object):
         )
 
     def _on_token_refresh_(self, token, **kwargs):
-        self.logger.info(f"Token refreshed by {self.token_uri}")
+        self.logger.info(f"Token of {self.name} refreshed")
         self.save_token()
 
     def load_token(self) -> dict:
@@ -122,9 +122,11 @@ class APIManager(object):
             self.config.get_config_dir(True) / f"{self.name}.auth.json", "w"
         ) as file:
             json.dump(self.client.token, file, indent=2)
+            self.logger.info(f"Saved token for {self.name} rewritten")
 
     def login(self):
         if not self.client.token:
+            self.logger.info(f"No saved token for {self.name} found, try to login...")
             with OAuthHTTPServer(self.port) as httpd:
                 code_verifier = generate_token(128)
                 extra_kwargs = {}
@@ -143,6 +145,7 @@ class APIManager(object):
                 self.logger.info(uri)
                 webbrowser.open_new(uri)
                 httpd.handle_request()
+                self.logger.info(f"Recreating session for {self.name}...")
                 self.__session__ = None
                 extra_kwargs = {}
                 if self.use_pkce:
@@ -151,14 +154,18 @@ class APIManager(object):
                     authorization_response=httpd.result, **extra_kwargs
                 )
                 self.save_token()
+        else:
+            self.logger.info(f"Found saved token for {self.name}")
         self.whoami = self._whoami_()
 
     def refresh_token(self):
+        self.logger.info(f"Force token update for {self.name}")
         self.client.refresh_token(self.token_uri)
 
     @property
     def client(self):
         if not self.__session__:
+            self.logger.info(f"Creating session for {self.name}...")
             token = self.load_token()
             self.__session__ = self.__session_class__(
                 client_id=self.client_id,

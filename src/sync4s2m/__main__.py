@@ -1,28 +1,108 @@
 from sync4s2m.tool import Sync4Shikimori2MAL
+from pathlib import Path
 
 import requests
 import sys
+import argparse
+import textwrap
+
+
+def handle_args():
+    parser = argparse.ArgumentParser(description="Script for lists synchronization between Shikimori (source) and MyAnimeList (target)", prog="sync4s2m")
+    parser.add_argument("-u", "--uni", action="store_true", default=False, help="unify list fields into a common format")
+    parser.add_argument("-t", "--template", type=str, help="per title template line for printing uni lists, raw dict for default")
+    parser.add_argument("-c", "--config", type=Path, help="override config directory")
+    
+    command_parser = parser.add_subparsers(help="List of commands", dest="command", required=True, metavar="command")
+
+    list_parser = command_parser.add_parser("list", help="show your listing from one of the sites")
+    list_parser.add_argument("source", choices=["shikimori", "myanimelist"], help="Site of your list: shikimori and myanimelist", metavar="source")
+
+    format_parser = command_parser.add_parser("template", help="show formatting names for uni lists")
+
+    delta_parser = command_parser.add_parser("delta", help="show delta between two sites")
+    delta_parser.add_argument("-r", "--reverse", action="store_true", default=False, help="use myanimelist as source instead of shikimori")
+    return parser.parse_args(sys.argv[1:])
+
+
+def template():
+    out = textwrap.dedent("""
+        Meta fields:
+        {modify_type} - type of title change in list: unmodified, added, edited or deleted
+        {title_type} - type of title: anime, manga or ranobe (ranobe is manga in myanimelist)
+        * ranobe type is a manga parsed from shikimori but with /ranobe/ in URL
+
+        Status fields:
+        {status} - watch status: planned, watching, completed, on_hold, rewatching, dropped
+        {score} - score in list: int [0..10]
+        {episodes} - number of anime episodes watched or 0 for manga/ranobe
+        {chapters} - number of manga/ranobe chapters readed or 0 for anime
+        {volumes} - number of manga/ranobe volumes readed or 0 for anime
+        {count} - max({episodes}, {chapters})
+        {rewatches} - count of rewatches
+        {text} - comment or empty string
+        {delta} - difference of same title entry on both sites or empty dict
+
+        Title fields:
+        {id} - id (used in title url and API)
+        {name} - title
+        {type} - media type: season, OVA, etc...
+        {name_ru} - Russian title or {name} if not present
+        {name_en} - English title or {name} if not present
+        {name_ja} - Japanese title or {name} if not present
+        {title_status} - title airing status: ongoing, released, anons, paused, discontinued
+        * paused and discontinued title statuses available only for manga/ranobe parsed from shikimori 
+        """)
+    print(out)
+
+
+def get_list(args):
+    tool = Sync4Shikimori2MAL(args)
+    if args.source == "shikimori":
+        tool.shikimori.login()
+        result = tool.get_shikimori_list()
+    elif args.source == "myanimelist":
+        tool.myanimelist.login()
+        result = tool.get_myanimelist_list()
+    else:
+        raise NotImplemented(f"{args.source} not supported")
+    if args.template:
+        if not args.uni:
+            print("-t/--template flag required unified (-u/--uni) list!")
+            sys.exit(1)
+        result = tool.to_format_dict(tool.uni_list(result))
+        for e in result:
+            print(args.template.format(**e))
+    else:
+        print(result)
+
+
+def get_delta(args):
+    tool = Sync4Shikimori2MAL(args)
+    tool.login()
+    result = tool.get_delta(source="myanimelist") if args.reverse else tool.get_delta()
+    if args.template:
+        if not args.uni:
+            print("-t/--template flag required unified (-u/--uni) list!")
+            sys.exit(1)
+        result = tool.to_format_dict(tool.uni_list(result))
+        for e in result:
+            print(args.template.format(**e))
+    else:
+        print(result)
 
 
 def main():
-    tool = Sync4Shikimori2MAL()
-    shikimori_api, myanimelist_api = tool.login()
+    args = handle_args()
+    if args.command == "template":
+        template(args)
+    elif args.command == "list":
+        get_list(args)
+    elif args.command == "delta":
+        get_delta(args)
+    else:
+        ValueError(f"Unknown command {args.command}")
 
-    # shikilist = tool.get_shikimori_list()
-    # for e in shikilist:
-    #     print(f"{e[0]}: {e[2]['name']}, kind: {e[2]['kind']}, status: {e[1]['status']}, updated: {e[1]['updated_at']}")
-
-    # mallist = tool.get_myanimelist_list()
-    # for e in mallist:
-    #     print(f"{e[0]}: {e[2]['title']}, kind: {e[2]['media_type']}, status: {e[1]['status']}, updated: {e[1]['updated_at']}")
-
-    delta = tool.uni_list(tool.get_delta())
-    for d in delta:
-        params = dict(d[1][1])
-        params.update(d[1][2])
-        params["title_type"] = d[1][0]
-        params["modify_type"] = d[0]
-        print(sys.argv[1].replace(r"\n", "\n").format(**params))
 
 if __name__ == "__main__":
     main()

@@ -10,7 +10,7 @@ ENV_HOME_PATH = "SYNC4S2M_HOME"
 
 
 class Config(object):
-    def __init__(self, logger):
+    def __init__(self, logger, args):
         self.logger = logger
         self.__values__ = {
             "shikimori": {
@@ -32,19 +32,25 @@ class Config(object):
                 ],
             },
         }
+        self.arg_dir = args.config
 
-    @staticmethod
-    def get_config_dir(create: bool = False) -> Path:
-        if ENV_HOME_PATH in os.environ:
+    def get_config_dir(self, create: bool = False) -> Path:
+        if self.arg_dir:
+            result = Path(self.arg_dir)
+            if create:
+                result.mkdir(parents=True, exist_ok=True)
+            return result
+        elif ENV_HOME_PATH in os.environ:
             result = Path(os.environ[ENV_HOME_PATH])
             if create:
                 result.mkdir(parents=True, exist_ok=True)
             return result
-        return Path(
-            platformdirs.user_config_dir(
-                appname="sync4s2m", appauthor="MJaroslav", ensure_exists=create
+        else:
+            return Path(
+                platformdirs.user_config_dir(
+                    appname="sync4s2m", appauthor="MJaroslav", ensure_exists=create
+                )
             )
-        )
 
     def __validate__(self) -> bool:
         result = False
@@ -136,4 +142,4 @@ class Config(object):
         if self.__validate__():
             with open(path, "w") as file:
                 json.dump(self.__values__, file, indent=2)
-        self.logger.info("Configuration loaded...")
+        self.logger.info("Configuration loaded")
